@@ -26,7 +26,6 @@
 #include "esp_wifi.h"
 #include "esp_http_server.h"
 #include "nvs_flash.h"
-#include "driver/gpio.h"
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
 
@@ -41,9 +40,6 @@
 #define NTP_SERVER      "ntp.aliyun.com"
 #define TZ_STR          "CST-8"
 #define RETRY_MAX       6
-
-#define BOOT_BTN_GPIO       0       // 开发板 BOOT 键（GPIO0，按下为低）
-#define BOOT_HOLD_RESET_MS  5000    // 按住 5 秒清除 WiFi 配置
 
 static const char *TAG = "wifi_mgr";
 
@@ -364,52 +360,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
-/* ---------------- 长按 BOOT 重置配网 ---------------- */
-static void erase_cred(void)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_erase_key(h, NVS_KEY_SSID);
-        nvs_erase_key(h, NVS_KEY_PASS);
-        nvs_commit(h);
-        nvs_close(h);
-    }
-}
-
-static void boot_key_task(void *arg)
-{
-    (void)arg;
-    gpio_config_t io = {
-        .pin_bit_mask = 1ULL << BOOT_BTN_GPIO,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&io);
-
-    int held_ms = 0;
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
-            held_ms += 20;
-            if (held_ms % 1000 == 0) {
-                ESP_LOGW(TAG, "BOOT held %d/%d s, keep holding to reset wifi",
-                         held_ms / 1000, BOOT_HOLD_RESET_MS / 1000);
-            }
-            if (held_ms >= BOOT_HOLD_RESET_MS) {
-                ESP_LOGW(TAG, "BOOT held %d s: clear wifi config and restart",
-                         BOOT_HOLD_RESET_MS / 1000);
-                erase_cred();
-                vTaskDelay(pdMS_TO_TICKS(300));
-                esp_restart();
-            }
-        } else {
-            held_ms = 0;
-        }
-    }
-}
-
 /* ---------------- 对外接口 ---------------- */
 void wifi_mgr_start(void)
 {
@@ -452,8 +402,20 @@ void wifi_mgr_start(void)
         s_state = WIFI_MGR_AP_CONFIG;
         xTaskCreate(softap_task, "softap", 4096, NULL, 5, NULL);
     }
+}
 
-    xTaskCreate(boot_key_task, "boot_key", 3072, NULL, 4, NULL);
+void wifi_mgr_clear_config(void)
+{
+    ESP_LOGW(TAG, "clear wifi config and restart");
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_key(h, NVS_KEY_SSID);
+        nvs_erase_key(h, NVS_KEY_PASS);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    esp_restart();
 }
 
 wifi_mgr_state_t wifi_mgr_state(void)
