@@ -1,0 +1,27 @@
+# ---- ESP-IDF 构建产物 ----
+build/
+*.bin
+*.elf
+*.map
+
+# ---- sdkconfig 临时/备份文件 ----
+sdkconfig.old
+sdkconfig.ci
+
+# ---- 组件管理器 ----
+managed_components/
+# 注意：dependencies.lock 建议提交到仓库，用于锁定组件版本
+
+# ---- 工具与 IDE ----
+.cache/
+.vscode/
+.trae/
+*.swp
+*~
+
+# ---- 系统文件 ----
+.DS_Store
+Thumbs.db
+
+# ---- 日志 ----
+*.log
