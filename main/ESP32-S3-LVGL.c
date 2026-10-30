@@ -11,14 +11,17 @@
  *   CS   -> GPIO10
  *   BLK  -> GPIO14
  *
- * 上电后循环播放 3 个画面：
+ * 上电后默认启动 LVGL 时钟界面（DEMO_ENABLE=0）；
+ * 把 DEMO_ENABLE 改成 1 可回到屏幕验证画面，循环播放：
  *   1. 彩色条（8 条，带文字标签）  —— 验证数据线/颜色是否正常
  *   2. 网格 + 边框 + 四角彩块 + 十字线 —— 验证几何/方向是否正确
  *   3. 动画（弹跳方块 + 彩虹滚动条）—— 验证刷新与 SPI 带宽
+ *   4. 代码生成的动画效果（雷达扫描 / 粒子星空 / 彩虹波浪）—— 展示"小视频"效果
  */
 
 #include <stdio.h>
 #include <assert.h>
+#include <math.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -32,6 +35,8 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+
+#include "clock_ui.h"
 
 static const char *TAG = "lcd_demo";
 
@@ -53,6 +58,11 @@ static const char *TAG = "lcd_demo";
                                             // （屏幕上/下出现约 1/3（80 行）雪花或整体偏移，就是这里设错了）
 #define LCD_INVERT     1                    // IPS 面板一般需要反色；若颜色像负片改成 0
 #define LCD_BGR        1                    // 红蓝互换时改 0
+
+/* 1 = 跑屏幕验证 demo；0 = 启动 LVGL 时钟界面 */
+#define DEMO_ENABLE    0
+
+#if DEMO_ENABLE
 
 /* ---------------- 8x16 ASCII 点阵字体 (32..126，行优先，bit0 = 最左列) ---------------- */
 static const uint8_t font8x16[95][16] = {
@@ -153,6 +163,16 @@ static const uint8_t font8x16[95][16] = {
     { 0x26, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* 126 '~' */
 };
 
+#endif /* DEMO_ENABLE */
+
+/* ---------------- 全局对象 ---------------- */
+static esp_lcd_panel_io_handle_t io_handle = NULL;
+static esp_lcd_panel_handle_t panel_handle = NULL;
+static SemaphoreHandle_t flush_done = NULL; // 一次整屏刷完的信号量
+
+#if DEMO_ENABLE
+static uint16_t *fb = NULL;                 // 240x240 RGB565 帧缓冲
+
 /* ---------------- 颜色 ---------------- */
 #define C_BLACK     0x0000
 #define C_WHITE     0xFFFF
@@ -164,12 +184,6 @@ static const uint8_t font8x16[95][16] = {
 #define C_MAGENTA   0xF81F
 #define C_GRAY      0x2945
 #define C_NAVY      0x0864
-
-/* ---------------- 全局对象 ---------------- */
-static esp_lcd_panel_io_handle_t io_handle = NULL;
-static esp_lcd_panel_handle_t panel_handle = NULL;
-static uint16_t *fb = NULL;                 // 240x240 RGB565 帧缓冲
-static SemaphoreHandle_t flush_done = NULL; // 一次整屏刷完的信号量
 
 /* ---------------- 底层绘图 ---------------- */
 static void put_pixel(int x, int y, uint16_t color)
@@ -278,6 +292,8 @@ static void draw_text_center(int cx, int y, const char *s, int scale, uint16_t c
     draw_text(cx - text_width(s, scale) / 2, y, s, scale, color);
 }
 
+#endif /* DEMO_ENABLE */
+
 /* ---------------- LCD 初始化 ---------------- */
 static bool lcd_on_color_trans_done(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
@@ -342,6 +358,7 @@ static esp_err_t lcd_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, LCD_X_GAP, LCD_Y_GAP));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
+#if DEMO_ENABLE
     // 5. 帧缓冲（必须放在可 DMA 的内部 RAM）
     fb = heap_caps_malloc(LCD_H_RES * LCD_V_RES * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (fb == NULL) {
@@ -349,18 +366,22 @@ static esp_err_t lcd_init(void)
         return ESP_ERR_NO_MEM;
     }
     memset(fb, 0, LCD_H_RES * LCD_V_RES * sizeof(uint16_t));
+#endif
 
     gpio_set_level(LCD_PIN_BL, 1); // 开背光
     return ESP_OK;
 }
 
+#if DEMO_ENABLE
 /* 整屏刷新，并等待 SPI 传输完成（避免动画时改帧缓冲造成撕裂） */
 static void lcd_flush(void)
 {
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, fb));
     xSemaphoreTake(flush_done, portMAX_DELAY);
 }
+#endif /* DEMO_ENABLE */
 
+#if DEMO_ENABLE
 /* ---------------- 画面 1：彩色条 ---------------- */
 static void demo_color_bars(void)
 {
@@ -422,14 +443,14 @@ static void demo_grid(void)
 }
 
 /* ---------------- 画面 3：动画 ---------------- */
-static uint16_t rainbow[LCD_H_RES];
+static uint16_t rainbow[256];
 
 static void build_rainbow(void)
 {
     static const uint16_t anchors[6] = { C_RED, C_YELLOW, C_GREEN, C_CYAN, C_BLUE, C_MAGENTA };
-    for (int i = 0; i < LCD_H_RES; i++) {
-        int seg = i / 40;
-        int t = (i % 40) * 255 / 40;
+    for (int i = 0; i < 256; i++) {
+        int seg = i * 6 / 256;
+        int t = (i * 6 - seg * 256) * 255 / 256;
         uint16_t a = anchors[seg];
         uint16_t b = anchors[(seg + 1) % 6];
         int ar = (a >> 11) & 0x1F, ag = (a >> 5) & 0x3F, ab = a & 0x1F;
@@ -463,7 +484,7 @@ static void demo_animation(int duration_ms)
         for (int yy = 216; yy < 240; yy++) {
             uint16_t *row = fb + yy * LCD_H_RES;
             for (int xx = 0; xx < LCD_H_RES; xx++) {
-                row[xx] = rainbow[(xx + offset) % LCD_H_RES];
+                row[xx] = rainbow[(xx + offset) % 256];
             }
         }
 
@@ -478,7 +499,7 @@ static void demo_animation(int duration_ms)
             vy = -vy;
             y += vy;
         }
-        uint16_t box_color = rainbow[(x * 2 + y * 3 + offset) % LCD_H_RES];
+        uint16_t box_color = rainbow[(x * 2 + y * 3 + offset) % 256];
         fill_rect(x, y, box, box, box_color);
         fill_rect(x + 4, y + 4, box - 8, 8, C_WHITE); // 方向标记
 
@@ -500,6 +521,182 @@ static void demo_animation(int duration_ms)
     }
 }
 
+/* ---------------- 画面 4：代码生成的动画效果 ---------------- */
+#define SIN_N 256
+static int16_t sin_tab[SIN_N];
+
+static void build_sin_table(void)
+{
+    for (int i = 0; i < SIN_N; i++) {
+        sin_tab[i] = (int16_t)(sinf((float)i * 2.0f * 3.14159265f / SIN_N) * 1000.0f);
+    }
+}
+
+static void draw_line(int x0, int y0, int x1, int y1, uint16_t color)
+{
+    int dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = y1 > y0 ? y0 - y1 : y1 - y0;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    while (1) {
+        put_pixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+/* 效果 A：雷达扫描 */
+static void effect_radar(int frame)
+{
+    const int cx = 120, cy = 120;
+    const uint16_t grid_color = 0x0180; // 暗绿
+
+    fill_rect(0, 0, LCD_H_RES, LCD_V_RES, C_BLACK);
+    draw_circle(cx, cy, 30, grid_color);
+    draw_circle(cx, cy, 60, grid_color);
+    draw_circle(cx, cy, 90, grid_color);
+    draw_circle(cx, cy, 118, grid_color);
+    draw_hline(cx - 118, cy, 236, grid_color);
+    draw_vline(cx, cy - 118, 236, grid_color);
+
+    // 扫描线 + 拖尾
+    int start = frame * 4;
+    for (int k = 0; k < 20; k++) {
+        int angle = start - k * 4;
+        int idx = (angle * SIN_N / 360) & (SIN_N - 1);
+        int cosv = sin_tab[(idx + 64) & (SIN_N - 1)];
+        int sinv = sin_tab[idx];
+        int x1 = cx + cosv * 118 / 1000;
+        int y1 = cy + sinv * 118 / 1000;
+        int g = 63 * (20 - k) / 20;
+        draw_line(cx, cy, x1, y1, (uint16_t)((g << 5) | (g >> 1)));
+    }
+
+    fill_rect(56, 4, 128, 20, C_BLACK);
+    draw_text_center(120, 6, "RADAR", 1, C_WHITE);
+}
+
+/* 效果 B：粒子星空 */
+#define STAR_COUNT 90
+static struct {
+    int16_t x, y;
+    int8_t vx, vy;
+    uint16_t color;
+} stars[STAR_COUNT];
+static uint32_t rng_state = 0x12345678u;
+
+static uint32_t rng_next(void)
+{
+    rng_state = rng_state * 1664525u + 1013904223u;
+    return rng_state;
+}
+
+static void init_particles(void)
+{
+    static const uint16_t palette[6] = { C_WHITE, C_CYAN, C_MAGENTA, C_YELLOW, C_BLUE, C_GREEN };
+    for (int i = 0; i < STAR_COUNT; i++) {
+        stars[i].x = rng_next() % LCD_H_RES;
+        stars[i].y = rng_next() % LCD_V_RES;
+        stars[i].vx = (int8_t)((rng_next() % 5) - 2); // -2..2
+        stars[i].vy = (int8_t)((rng_next() % 5) - 2);
+        stars[i].color = palette[rng_next() % 6];
+    }
+}
+
+static void effect_particles(int frame)
+{
+    (void)frame;
+    fill_rect(0, 0, LCD_H_RES, LCD_V_RES, C_BLACK);
+    for (int i = 0; i < STAR_COUNT; i++) {
+        int x = stars[i].x + stars[i].vx;
+        int y = stars[i].y + stars[i].vy;
+        if (x < 0) {
+            x += LCD_H_RES;
+        } else if (x >= LCD_H_RES) {
+            x -= LCD_H_RES;
+        }
+        if (y < 0) {
+            y += LCD_V_RES;
+        } else if (y >= LCD_V_RES) {
+            y -= LCD_V_RES;
+        }
+        stars[i].x = x;
+        stars[i].y = y;
+        fill_rect(x, y, 2, 2, stars[i].color);
+    }
+
+    fill_rect(48, 4, 144, 20, C_BLACK);
+    draw_text_center(120, 6, "PARTICLES", 1, C_WHITE);
+}
+
+/* 效果 C：彩虹波浪（整行 memcpy，几乎不耗 CPU） */
+static void effect_waves(int frame)
+{
+    for (int y = 0; y < LCD_V_RES; y++) {
+        int off = (sin_tab[(y * 3 + frame * 5) & (SIN_N - 1)] * 60) / 1000 + 120;
+        off &= 255;
+        uint16_t *row = fb + y * LCD_H_RES;
+        int first = 256 - off;
+        if (first > LCD_H_RES) {
+            first = LCD_H_RES;
+        }
+        memcpy(row, rainbow + off, first * sizeof(uint16_t));
+        if (first < LCD_H_RES) {
+            memcpy(row + first, rainbow, (LCD_H_RES - first) * sizeof(uint16_t));
+        }
+    }
+
+    fill_rect(56, 4, 128, 20, C_BLACK);
+    draw_text_center(120, 6, "WAVES", 1, C_WHITE);
+}
+
+static void demo_effects(int duration_ms)
+{
+    build_rainbow();
+    build_sin_table();
+    init_particles();
+
+    int64_t t0 = esp_timer_get_time();
+    int64_t t_last = t0;
+    int frame = 0;
+    int frames = 0;
+
+    while (esp_timer_get_time() - t0 < (int64_t)duration_ms * 1000) {
+        int stage = (int)((esp_timer_get_time() - t0) / 3000000) % 3;
+        if (stage == 0) {
+            effect_radar(frame);
+        } else if (stage == 1) {
+            effect_particles(frame);
+        } else {
+            effect_waves(frame);
+        }
+
+        lcd_flush();
+        frame++;
+        frames++;
+
+        int64_t now = esp_timer_get_time();
+        if (now - t_last >= 1000000) {
+            ESP_LOGI(TAG, "effects fps: %d", frames);
+            frames = 0;
+            t_last = now;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+#endif /* DEMO_ENABLE */
+
 /* ---------------- 入口 ---------------- */
 void app_main(void)
 {
@@ -512,8 +709,10 @@ void app_main(void)
         ESP_LOGE(TAG, "lcd init failed");
         return;
     }
-    ESP_LOGI(TAG, "lcd init ok, start demo loop");
+    ESP_LOGI(TAG, "lcd init ok");
 
+#if DEMO_ENABLE
+    ESP_LOGI(TAG, "start demo loop");
     while (1) {
         ESP_LOGI(TAG, "demo 1: color bars");
         demo_color_bars();
@@ -524,6 +723,13 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(4000));
 
         ESP_LOGI(TAG, "demo 3: animation");
-        demo_animation(8000);
+        demo_animation(6000);
+
+        ESP_LOGI(TAG, "demo 4: effects (radar / particles / waves)");
+        demo_effects(12000);
     }
+#else
+    // LVGL 时钟界面（界面逻辑在 clock_ui.c）
+    clock_ui_start(io_handle, panel_handle);
+#endif
 }
