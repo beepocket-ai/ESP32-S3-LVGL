@@ -8,7 +8,7 @@
  *   - 模拟表盘（时/分/秒三根指针）+ 数字时间 + 日期 + WiFi/NTP 状态
  *   - 首次上电（或连接失败）时进入配网模式：屏幕提示热点名与 192.168.4.1，
  *     手机连热点后网页填写 WiFi，保存重启后自动联网 NTP 对时（东八区）
- *   - BOOT 键：短按切换「表盘 / 图片轮播（1.png 2.png 3.png 每 5 秒）」，
+ *   - BOOT 键：短按切换「表盘 / 图片轮播（1.png ~ 8.png 每 5 秒）」，
  *     长按 5 秒清除 WiFi 配置并重启
  */
 
@@ -36,7 +36,7 @@
 #define LCD_V_RES   240
 #define BUF_LINES   40                      // 局部渲染缓冲（40 行，双缓冲约 38KB）
 
-#define IMG_COUNT           3               // 1.png / 2.png / 3.png
+#define IMG_COUNT           8               // 1.png ~ 8.png
 #define BOOT_BTN_GPIO       0               // 开发板 BOOT 键（GPIO0，按下为低）
 #define BOOT_HOLD_RESET_MS  5000            // 长按 5 秒重置 WiFi 配置
 #define BTN_SHORT_PRESS_MS  100             // 松开时按住时长 >= 100ms 才算一次按键
@@ -77,6 +77,11 @@ static SemaphoreHandle_t s_lvgl_mutex;      // 保护跨线程的 LVGL 调用
 extern const uint8_t img1[];
 extern const uint8_t img2[];
 extern const uint8_t img3[];
+extern const uint8_t img4[];
+extern const uint8_t img5[];
+extern const uint8_t img6[];
+extern const uint8_t img7[];
+extern const uint8_t img8[];
 
 /* ---------------- LVGL 显示端口 ---------------- */
 static bool on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
@@ -277,7 +282,7 @@ static void clock_timer_cb(lv_timer_t *timer)
 /* ---------------- 图片轮播 ---------------- */
 static void init_images(void)
 {
-    static const uint8_t *const data[IMG_COUNT] = { img1, img2, img3 };
+    static const uint8_t *const data[IMG_COUNT] = { img1, img2, img3, img4, img5, img6, img7, img8 };
     for (int i = 0; i < IMG_COUNT; i++) {
         memset(&s_img_dsc[i], 0, sizeof(s_img_dsc[i]));
         s_img_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;

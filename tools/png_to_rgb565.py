@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把项目根目录的 1.png / 2.png / 3.png 转成 LVGL 可直接使用的 RGB565 二进制（240x240）。
+"""把项目根目录的 1.png ~ 8.png 转成 LVGL 可直接使用的 RGB565 二进制（240x240）。
 
 只依赖 Python 标准库（zlib），不需要 Pillow。
 支持：8bit、非隔行的 PNG，灰度/灰度+Alpha/RGB/RGBA/调色板 五种颜色类型；
@@ -8,7 +8,7 @@
 用法（项目根目录）:
     python tools/png_to_rgb565.py
 
-输出: main/images/img1.bin ~ img3.bin（每张 240*240*2 = 115200 字节），
+输出: main/images/img1.bin ~ img8.bin（每张 240*240*2 = 115200 字节），
 由 main/CMakeLists.txt 的 target_add_binary_data 打包进固件。
 """
 import os
@@ -144,7 +144,7 @@ def convert(src_path, dst_path):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    for idx in (1, 2, 3):
+    for idx in range(1, 9):
         src = os.path.join(ROOT, f"{idx}.png")
         dst = os.path.join(OUT_DIR, f"img{idx}.bin")
         convert(src, dst)
