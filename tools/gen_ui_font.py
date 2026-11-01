@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成「答案之书」用到的中文字体（LVGL 自定义 lv_font_t，A8 灰度位图）。
+"""生成「呼吸引导器」用到的中文字体（LVGL 自定义 lv_font_t，A8 灰度位图）。
 
 依赖: Pillow（仅重新生成字体时需要，固件不需要）
 字体源: C:/Windows/Fonts/simhei.ttf（黑体）
@@ -10,13 +10,12 @@
       get_glyph_bitmap 里把位图按行拷贝到 LVGL 给的 draw_buf，返回 draw_buf。
 
 用法（项目根目录）:
-    python tools/gen_book_font.py
+    python tools/gen_ui_font.py
 输出:
-    main/book_font_16.c  (答案正文 16px，覆盖 answers.json 全部用字)
-    main/book_font_28.c  (封面标题 28px，只含「答案之书」等少量字)
-    main/book_font.h
+    main/ui_font_16.c  (正文/提示 16px)
+    main/ui_font_28.c  (标题/倒计时 28px)
+    main/ui_font.h
 """
-import json
 import os
 from PIL import Image, ImageDraw, ImageFont
 
@@ -25,17 +24,11 @@ FONT_TTF = r"C:\Windows\Fonts\simhei.ttf"
 OUT_DIR = os.path.join(ROOT, "main")
 
 ASCII_CHARS = "".join(chr(c) for c in range(0x20, 0x7F))
-UI_CHARS = "答案之书心想一个问题按下翻开再换条键"  # 界面文案用到的汉字
-
-COVER_TITLE = "答案之书"
-
-
-def build_charset():
-    answers = json.load(open(os.path.join(OUT_DIR, "answers.json"), encoding="utf-8"))
-    chars = set(ASCII_CHARS) | set(UI_CHARS)
-    for a in answers:
-        chars |= set(a)
-    return sorted(chars, key=ord)
+# 16px 界面文案用字：呼吸引导 / 4-7-8 呼吸法 / 吸气 屏息 呼气 / 第 x/x 轮
+# 按下 BOOT 开始 / 再按 BOOT 结束 / 完成
+UI_CHARS_16 = "呼吸引导法气屏息按下开始再结束第轮完成"
+# 28px 只用于标题与「完成」（倒计时数字在 ASCII 里）
+UI_CHARS_28 = "呼吸引导完成"
 
 
 def render_glyph(font, ch, size):
@@ -72,9 +65,9 @@ def gen_font(chars, size, name, out_path):
         bitmaps += data
 
     lines = []
-    lines.append(f"/* 自动生成: tools/gen_book_font.py  size={size}  glyphs={len(glyphs)}  bitmap={len(bitmaps)}B */")
+    lines.append(f"/* 自动生成: tools/gen_ui_font.py  size={size}  glyphs={len(glyphs)}  bitmap={len(bitmaps)}B */")
     lines.append('#include <string.h>')
-    lines.append('#include "book_font.h"')
+    lines.append('#include "ui_font.h"')
     lines.append("")
     lines.append("typedef struct {")
     lines.append("    uint32_t cp;")
@@ -82,15 +75,15 @@ def gen_font(chars, size, name, out_path):
     lines.append("    int16_t ofs_x, ofs_y;")
     lines.append("    uint8_t w, h;")
     lines.append("    uint32_t data_ofs;")
-    lines.append(f"}} glyph_t;")
+    lines.append("} glyph_t;")
     lines.append("")
-    lines.append(f"static const uint8_t s_bitmap[] = {{")
+    lines.append("static const uint8_t s_bitmap[] = {")
     for i in range(0, len(bitmaps), 16):
         chunk = ",".join(f"0x{b:02X}" for b in bitmaps[i:i + 16])
         lines.append("    " + chunk + ",")
     lines.append("};")
     lines.append("")
-    lines.append(f"static const glyph_t s_glyphs[] = {{")
+    lines.append("static const glyph_t s_glyphs[] = {")
     for cp, adv, ofs_x, ofs_y, w, h, ofs in glyphs:
         lines.append(f"    {{0x{cp:04X}, {adv}, {ofs_x}, {ofs_y}, {w}, {h}, {ofs}}},  /* {chr(cp)} */")
     lines.append("};")
@@ -143,19 +136,21 @@ def gen_font(chars, size, name, out_path):
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"{os.path.basename(out_path)}: {len(glyphs)} glyphs, {len(bitmaps)} bytes bitmap, line_height={ascent + descent}, base_line={descent}")
+    print(f"{os.path.basename(out_path)}: {len(glyphs)} glyphs, {len(bitmaps)} bytes bitmap, "
+          f"line_height={ascent + descent}, base_line={descent}")
 
 
 def main():
-    header = os.path.join(OUT_DIR, "book_font.h")
+    header = os.path.join(OUT_DIR, "ui_font.h")
     with open(header, "w", encoding="utf-8") as f:
-        f.write("/** 自动生成: tools/gen_book_font.py —— 答案之书中文点阵字体 */\n")
+        f.write("/** 自动生成: tools/gen_ui_font.py —— 呼吸引导器中文点阵字体 */\n")
         f.write("#pragma once\n\n#include \"lvgl.h\"\n\n")
-        f.write("extern const lv_font_t book_font_16;\nextern const lv_font_t book_font_28;\n")
+        f.write("extern const lv_font_t ui_font_16;\nextern const lv_font_t ui_font_28;\n")
 
-    gen_font(build_charset(), 16, "book_font_16", os.path.join(OUT_DIR, "book_font_16.c"))
-    gen_font(sorted(set(COVER_TITLE + ASCII_CHARS), key=ord), 28, "book_font_28",
-             os.path.join(OUT_DIR, "book_font_28.c"))
+    chars16 = sorted(set(ASCII_CHARS) | set(UI_CHARS_16), key=ord)
+    chars28 = sorted(set(ASCII_CHARS) | set(UI_CHARS_28), key=ord)
+    gen_font(chars16, 16, "ui_font_16", os.path.join(OUT_DIR, "ui_font_16.c"))
+    gen_font(chars28, 28, "ui_font_28", os.path.join(OUT_DIR, "ui_font_28.c"))
 
 
 if __name__ == "__main__":

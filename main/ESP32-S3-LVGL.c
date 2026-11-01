@@ -11,7 +11,7 @@
  *   CS   -> GPIO10
  *   BLK  -> GPIO14
  *
- * 上电后默认启动 LVGL「答案之书」界面（DEMO_ENABLE=0）；
+ * 上电后默认启动 LVGL「呼吸引导器」界面（DEMO_ENABLE=0）；
  * 把 DEMO_ENABLE 改成 1 可回到屏幕验证画面，循环播放：
  *   1. 彩色条（8 条，带文字标签）  —— 验证数据线/颜色是否正常
  *   2. 网格 + 边框 + 四角彩块 + 十字线 —— 验证几何/方向是否正确
@@ -36,7 +36,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
-#include "book_ui.h"
+#include "breath_ui.h"
 
 static const char *TAG = "lcd_demo";
 
@@ -729,7 +729,7 @@ void app_main(void)
         demo_effects(12000);
     }
 #else
-    // 答案之书界面（界面逻辑在 book_ui.c）
-    book_ui_start(io_handle, panel_handle);
+    // 呼吸引导器界面（界面逻辑在 breath_ui.c）
+    breath_ui_start(io_handle, panel_handle);
 #endif
 }
